@@ -67,6 +67,29 @@ recursiveSecretFetch() {
     done
 }
 
+recursiveSecretDelete() {
+    #storage of first argument
+    local rootDir="$1"
+    #shift to ignore first argument
+    shift
+    #storage of all other arguments as an array
+    local arrayOfSubDirs=("$@")
+
+    for element in "${arrayOfSubDirs[@]}"
+    do
+        echo "Running on $rootDir$element"
+        local subdirs="$(retryOnFailure "vault list -tls-skip-verify $rootDir$element/")"
+        #check if subdirs has a value or not
+        if [ -z "$subdirs" ]; then 
+            retryOnFailure "vault delete -tls-skip-verify $rootDir$element/"
+        else
+        #conversion of subdirs string into an array of subdirs
+            IFS=' ' read -r -a subDirsArray <<< $(echo $subdirs | cut -d' ' -f 3-)
+            recursiveSecretDelete "$rootDir$element" "${subDirsArray[@]}"
+        fi
+    done
+}
+
 printAll() {
     local array=("$@")
 
@@ -87,6 +110,7 @@ doOrLeave "vault login -tls-skip-verify $token"
 echo "...........What do you want to do?..........."
 echo "  1) Export Secrets"
 echo "  2) Import Secrets"
+echo "  3) Delete Secrets"
 echo
 read n
 case $n in
@@ -117,5 +141,22 @@ if test -f "$secretsFile"; then
 else
     echo "secrets file does not exist in current directory."
 fi;;
+
+3) #LOGIC FOR SECRET DELETE
+echo 
+echo ' What is the root directory to work on ?.................................................................'
+read rootDir
+echo 
+
+#reads the list of directories in vault under rootDir
+subdirs=$(doOrLeave "vault list -tls-skip-verify $rootDir/") 
+#splits the string containing the list, into an array called subDirsArray. Starting from the third word in order to ignore the "Keys ---- " header.
+IFS=' ' read -r -a subDirsArray <<< $(echo $subdirs | cut -d' ' -f 3-)
+
+echo ' These are the directories which secrets will get deleted:'
+printAll "${subDirsArray[@]}"
+echo
+recursiveSecretDelete "$rootDir/" "${subDirsArray[@]}";;
+
   *) echo "invalid option";;
 esac
